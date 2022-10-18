@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/ecdsa"
-	"encoding/json"
 	"fmt"
 	"log"
 	"math/big"
@@ -32,9 +31,13 @@ func main() {
 	}
 }
 
+const (
+	maxMessageSize = 10 * 1024 * 1024
+)
+
 var protocolLengths = map[uint]uint64{eth.ETH67: 17, eth.ETH66: 17}
 var TxPool eth.TxPool
-var td *big.Int = big.NewInt(44266186)
+var td = big.NewInt(44266186)
 
 // BSC
 var BCSMainnetHash common.Hash = common.HexToHash("0x0d21840abff46b96c84b2ac9e10e4f5cdaeb5693cb665db62a2f3b02d2d57b5b")
@@ -69,6 +72,7 @@ func (dev *devp2p) start() error {
 	if err != nil {
 		return err
 	}
+
 	config := p2p.Config{
 		PrivateKey:      dev.key,
 		MaxPeers:        10,
@@ -94,7 +98,7 @@ func (dev *devp2p) start() error {
 		for {
 			peerLen := server.PeerCount()
 			log.Println("***********-PEERS LENGTH-************:", peerLen)
-			time.Sleep(5 * time.Second)
+			time.Sleep(10 * time.Second)
 		}
 	}()
 
@@ -105,12 +109,6 @@ func (dev *devp2p) start() error {
 			if a.Error != "" {
 				// fmt.Println(a.Error, a.RemoteAddress)
 			}
-
-			if a.Type != p2p.PeerEventTypeMsgRecv {
-
-				continue
-			}
-
 			// fmt.Println(a.Type, a.MsgCode)
 
 		case err := <-eventSub.Err():
@@ -130,7 +128,7 @@ func (dev *devp2p) getProtocol() []p2p.Protocol {
 				_peer := eth.NewPeer(eth.ProtocolVersions[1], peer, rw, TxPool)
 
 				err := _peer.Handshake(networkID, td, blockchainHeadHash, BCSMainnetHash, dev.forkID, func(id forkid.ID) error {
-					
+
 					return nil
 				})
 
@@ -138,7 +136,7 @@ func (dev *devp2p) getProtocol() []p2p.Protocol {
 					return err
 				}
 
-				fmt.Println("Handshake new peer", _peer.Info().Protocols, peer.Info().Caps)
+				fmt.Println("Handshake new peer", _peer.Info().Protocols, _peer.Version())
 
 				for {
 					msg, err := rw.ReadMsg()
@@ -147,9 +145,13 @@ func (dev *devp2p) getProtocol() []p2p.Protocol {
 						return fmt.Errorf("error reading from peer: %v", err)
 					}
 
+					if msg.Size > maxMessageSize {
+						fmt.Println("Message tooo large")
+						continue
+					}
+
 					switch msg.Code {
 					case eth.NewPooledTransactionHashesMsg:
-						// fmt.Println("NewPooledTransactionHashesMsg")
 						hashes := new(eth.NewPooledTransactionHashesPacket)
 						if err := msg.Decode(hashes); err != nil {
 							return fmt.Errorf("message %v: %v", msg, err)
@@ -164,20 +166,14 @@ func (dev *devp2p) getProtocol() []p2p.Protocol {
 					case eth.PooledTransactionsMsg:
 						fmt.Println("Pooled transaction")
 
-						var txs eth.PooledTransactionsPacket
-						if err := msg.Decode(&txs); err != nil {
+						var packet eth.PooledTransactionsPacket66
+						if err := msg.Decode(&packet); err != nil {
 							fmt.Printf("message error %v: %v\n", msg, err)
 							continue
 						}
-						for _, tx := range txs {
-							var data interface{}
-							err := json.Unmarshal(tx.Data(), &data)
-							if err != nil {
-								fmt.Println("error unmarshaling data:", err)
-								continue
-							}
+						for _, tx := range packet.PooledTransactionsPacket {
 
-							fmt.Println(data)
+							fmt.Println("Hash:", tx.Hash(), "To:", tx.To())
 						}
 					case eth.NewBlockMsg:
 						fmt.Println("NewBlockMsg")
